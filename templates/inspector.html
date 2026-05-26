@@ -1,0 +1,61 @@
+{{define "inspector.html"}}
+<div class="flex min-h-full flex-col" data-current-webhook="{{.ID}}">
+  <div class="border-b border-zinc-200 p-4">
+    <div class="flex items-start justify-between gap-4">
+      <div class="min-w-0">
+        <div class="mb-2 flex items-center gap-2">
+          <span class="rounded-md bg-zinc-950 px-2 py-1 text-xs font-semibold text-white">{{.Method}}</span>
+          <span class="status-pill" data-status="{{.StatusCode}}">{{statusText .StatusCode}}</span>
+        </div>
+        <h2 class="break-words font-mono text-sm font-semibold text-zinc-950">{{.Path}}</h2>
+        <code class="mt-2 block truncate text-xs text-zinc-500">{{.ID}}</code>
+      </div>
+      <form hx-post="/dashboard/replay/{{.ID}}" hx-target="#replay-result" hx-swap="innerHTML">
+        <button class="rounded-md bg-emerald-700 px-3 py-2 text-sm font-semibold text-white active:translate-y-px" type="submit">Replay</button>
+      </form>
+    </div>
+    <div id="replay-result" class="mt-3 min-h-5 text-sm text-zinc-600"></div>
+  </div>
+
+  <div class="grid grid-cols-2 gap-px border-b border-zinc-200 bg-zinc-200 text-sm">
+    <div class="bg-zinc-50 p-4">
+      <div class="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-500">Received</div>
+      <div class="mt-1 font-medium">{{timeText .ReceivedAt}}</div>
+    </div>
+    <div class="bg-zinc-50 p-4">
+      <div class="text-xs font-semibold uppercase tracking-[0.14em] text-zinc-500">Delivered</div>
+      <div class="mt-1 font-medium">{{if .DeliveredAt.IsZero}}Pending{{else}}{{timeText .DeliveredAt}}{{end}}</div>
+    </div>
+  </div>
+
+  <section class="border-b border-zinc-200 p-4">
+    <h3 class="mb-3 text-xs font-semibold uppercase tracking-[0.14em] text-zinc-500">Local response body</h3>
+    {{if .ResponseBody}}
+      <pre class="body-viewer" data-body-viewer>{{.ResponseBody}}</pre>
+    {{else}}
+      <div class="rounded-md border border-zinc-200 bg-zinc-50 p-4 text-sm text-zinc-500">No local response body.</div>
+    {{end}}
+  </section>
+
+  <section class="border-b border-zinc-200 p-4">
+    <h3 class="mb-3 text-xs font-semibold uppercase tracking-[0.14em] text-zinc-500">Request body</h3>
+    <pre class="body-viewer" data-body-viewer>{{.Body}}</pre>
+  </section>
+
+  <section class="flex-1 p-4">
+    <h3 class="mb-3 text-xs font-semibold uppercase tracking-[0.14em] text-zinc-500">Headers</h3>
+    {{if .Headers}}
+      <div class="space-y-2">
+        {{range $key, $values := .Headers}}
+          <div class="grid grid-cols-[120px_minmax(0,1fr)] gap-3 rounded-md border border-zinc-200 bg-zinc-50 p-3 text-xs">
+            <div class="truncate font-semibold text-zinc-600">{{$key}}</div>
+            <div class="break-words font-mono text-zinc-800">{{join $values ", "}}</div>
+          </div>
+        {{end}}
+      </div>
+    {{else}}
+      <div class="text-sm text-zinc-500">No headers.</div>
+    {{end}}
+  </section>
+</div>
+{{end}}

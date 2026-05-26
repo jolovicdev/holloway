@@ -1,0 +1,18 @@
+services:
+  holloway:
+    build: .
+    restart: unless-stopped
+    environment:
+      HOLLOWAY_ADDR: ":8080"
+      HOLLOWAY_DB: "/data/holloway.db"
+      HOLLOWAY_ADMIN_PASSWORD: "${HOLLOWAY_ADMIN_PASSWORD:?set HOLLOWAY_ADMIN_PASSWORD}"
+      HOLLOWAY_BOOTSTRAP_TOKEN: "${HOLLOWAY_BOOTSTRAP_TOKEN:-}"
+      HOLLOWAY_BOOTSTRAP_TUNNEL_SECRET: "${HOLLOWAY_BOOTSTRAP_TUNNEL_SECRET:-}"
+      HOLLOWAY_WEBHOOK_RATE_LIMIT: "${HOLLOWAY_WEBHOOK_RATE_LIMIT:-300}"
+    volumes:
+      - holloway-data:/data
+    ports:
+      - "8080:8080"
+
+volumes:
+  holloway-data:
