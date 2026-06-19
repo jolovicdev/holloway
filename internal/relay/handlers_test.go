@@ -41,8 +41,8 @@ func TestHookStoresWebhookBeforeReportingDisconnectedClient(t *testing.T) {
 
 	app.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("status = %d, want 502", rec.Code)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", rec.Code)
 	}
 
 	pending, err := app.store.PendingWebhooks("testtoken")
@@ -71,8 +71,8 @@ func TestHookRateLimitsBeforeSavingWebhook(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/hook/testtoken/orders", strings.NewReader(`{"id":1}`))
 	rec := httptest.NewRecorder()
 	app.ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("first status = %d, want 502", rec.Code)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("first status = %d, want 202", rec.Code)
 	}
 
 	req = httptest.NewRequest(http.MethodPost, "/hook/testtoken/orders", strings.NewReader(`{"id":2}`))
@@ -121,7 +121,7 @@ func TestHookMarksDeliveredWhenClientReceivesWebhook(t *testing.T) {
 
 	app := newTestApp(t)
 	app.createToken(t, "testtoken")
-	sender := &fakeSender{response: tunnel.Response{ID: "ignored", StatusCode: 202, Body: `{"accepted":true}`}}
+	sender := &fakeSender{response: tunnel.Response{ID: "ignored", StatusCode: 201, Body: `{"accepted":true}`}}
 	unregister := app.hub.Register("testtoken", sender)
 	defer unregister()
 
@@ -130,12 +130,14 @@ func TestHookMarksDeliveredWhenClientReceivesWebhook(t *testing.T) {
 
 	app.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rec.Code)
+	// Hybrid live delivery passes the local app's status and body straight back
+	// to the provider rather than a hardcoded 200/"delivered".
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201", rec.Code)
 	}
 	body, _ := io.ReadAll(rec.Body)
-	if strings.TrimSpace(string(body)) != "delivered" {
-		t.Fatalf("body = %q, want delivered", string(body))
+	if string(body) != `{"accepted":true}` {
+		t.Fatalf("body = %q, want local response passed through", string(body))
 	}
 
 	pending, err := app.store.PendingWebhooks("testtoken")
@@ -150,8 +152,8 @@ func TestHookMarksDeliveredWhenClientReceivesWebhook(t *testing.T) {
 	if err != nil {
 		t.Fatalf("last webhooks: %v", err)
 	}
-	if len(history) != 1 || history[0].StatusCode != 202 {
-		t.Fatalf("history = %#v, want delivered status 202", history)
+	if len(history) != 1 || history[0].StatusCode != 201 {
+		t.Fatalf("history = %#v, want delivered status 201", history)
 	}
 	if history[0].ResponseBody != `{"accepted":true}` {
 		t.Fatalf("response body = %q, want local response", history[0].ResponseBody)
@@ -175,8 +177,8 @@ func TestHookKeepsWebhookPendingWhenLocalDeliveryFails(t *testing.T) {
 
 	app.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("status = %d, want 502", rec.Code)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", rec.Code)
 	}
 	pending, err := app.store.PendingWebhooks("testtoken")
 	if err != nil {
@@ -184,6 +186,34 @@ func TestHookKeepsWebhookPendingWhenLocalDeliveryFails(t *testing.T) {
 	}
 	if len(pending) != 1 {
 		t.Fatalf("pending count = %d, want 1", len(pending))
+	}
+}
+
+func TestHookForwardsLocalErrorStatusToProvider(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t)
+	app.createToken(t, "testtoken")
+	sender := &fakeSender{response: tunnel.Response{ID: "ignored", StatusCode: 500, Body: "boom"}}
+	unregister := app.hub.Register("testtoken", sender)
+	defer unregister()
+
+	req := httptest.NewRequest(http.MethodPost, "/hook/testtoken/orders", strings.NewReader(`{"id":1}`))
+	rec := httptest.NewRecorder()
+
+	app.ServeHTTP(rec, req)
+
+	// A reachable local app that returns 5xx must reach the provider as 5xx, not
+	// be masked as success.
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500 passed through", rec.Code)
+	}
+	history, err := app.store.LastWebhooks(1)
+	if err != nil {
+		t.Fatalf("last webhooks: %v", err)
+	}
+	if len(history) != 1 || history[0].StatusCode != 500 {
+		t.Fatalf("history = %#v, want delivered status 500", history)
 	}
 }
 

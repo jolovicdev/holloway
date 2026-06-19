@@ -38,6 +38,8 @@ func run(ctx context.Context, args []string, getenv func(string) string) error {
 	bootstrapToken := flags.String("bootstrap-token", envFrom(getenv, "HOLLOWAY_BOOTSTRAP_TOKEN", ""), "initial token")
 	bootstrapTunnelSecret := flags.String("bootstrap-tunnel-secret", envFrom(getenv, "HOLLOWAY_BOOTSTRAP_TUNNEL_SECRET", ""), "initial token tunnel secret")
 	webhookRateLimit := flags.Int("webhook-rate-limit", envIntFrom(getenv, "HOLLOWAY_WEBHOOK_RATE_LIMIT", relay.DefaultWebhookRateLimitPerMinute), "webhook requests per token per minute")
+	retentionMaxAge := flags.Duration("retention-max-age", envDurationFrom(getenv, "HOLLOWAY_RETENTION_MAX_AGE", 0), "delete webhooks older than this (e.g. 720h); 0 disables")
+	retentionMaxRows := flags.Int("retention-max-rows", envIntFrom(getenv, "HOLLOWAY_RETENTION_MAX_ROWS", 0), "keep at most this many webhooks per token; 0 disables")
 	allowInsecureAdmin := flags.Bool("allow-insecure-admin", envBoolFrom(getenv, "HOLLOWAY_ALLOW_INSECURE_ADMIN", false), "allow unauthenticated dashboard and token management")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -65,6 +67,8 @@ func run(ctx context.Context, args []string, getenv func(string) string) error {
 			return err
 		}
 	}
+
+	startRetentionSweep(ctx, st, *retentionMaxAge, *retentionMaxRows)
 
 	broker := dashboard.NewBroker()
 	hub := relay.NewHub()
@@ -106,8 +110,41 @@ func run(ctx context.Context, args []string, getenv func(string) string) error {
 	return nil
 }
 
-func env(key, fallback string) string {
-	return envFrom(os.Getenv, key, fallback)
+const retentionSweepInterval = time.Hour
+
+func startRetentionSweep(ctx context.Context, st *store.Store, maxAge time.Duration, maxRows int) {
+	if maxAge <= 0 && maxRows <= 0 {
+		return
+	}
+	go func() {
+		ticker := time.NewTicker(retentionSweepInterval)
+		defer ticker.Stop()
+		for {
+			sweepRetention(st, maxAge, maxRows)
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+}
+
+func sweepRetention(st *store.Store, maxAge time.Duration, maxRows int) {
+	if maxAge > 0 {
+		if removed, err := st.DeleteWebhooksOlderThan(time.Now().Add(-maxAge)); err != nil {
+			log.Printf("retention: delete by age: %v", err)
+		} else if removed > 0 {
+			log.Printf("retention: removed %d webhooks older than %s", removed, maxAge)
+		}
+	}
+	if maxRows > 0 {
+		if removed, err := st.DeleteWebhooksOverCountPerToken(maxRows); err != nil {
+			log.Printf("retention: delete by count: %v", err)
+		} else if removed > 0 {
+			log.Printf("retention: removed %d webhooks over %d per token", removed, maxRows)
+		}
+	}
 }
 
 func envFrom(getenv func(string) string, key, fallback string) string {
@@ -116,6 +153,18 @@ func envFrom(getenv func(string) string, key, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func envDurationFrom(getenv func(string) string, key string, fallback time.Duration) time.Duration {
+	value := getenv(key)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := time.ParseDuration(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
 }
 
 func envIntFrom(getenv func(string) string, key string, fallback int) int {

@@ -3,7 +3,9 @@ package relay
 import (
 	"context"
 	"errors"
+	"strconv"
 	"sync"
+	"sync/atomic"
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
@@ -16,6 +18,7 @@ var errClientClosed = errors.New("client connection closed")
 type WSClient struct {
 	conn *websocket.Conn
 
+	seq     atomic.Uint64
 	mu      sync.Mutex
 	pending map[string]chan tunnel.Response
 	closed  chan struct{}
@@ -34,6 +37,10 @@ func NewWSClient(conn *websocket.Conn) *WSClient {
 
 func (c *WSClient) Send(ctx context.Context, req tunnel.Request) (tunnel.Response, error) {
 	req = req.WithType()
+	// Route responses by a per-send correlation ID rather than the webhook ID:
+	// the same webhook can be in flight twice (e.g. periodic drain and a manual
+	// replay), and a shared key would collide in the pending map.
+	req.ID = strconv.FormatUint(c.seq.Add(1), 10)
 	ch := make(chan tunnel.Response, 1)
 
 	c.mu.Lock()
