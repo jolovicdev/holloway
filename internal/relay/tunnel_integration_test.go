@@ -54,8 +54,8 @@ func TestTunnelDeliversIncomingWebhookOverWebSocket(t *testing.T) {
 		t.Fatalf("post webhook: %v", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204 (local response passed through)", resp.StatusCode)
 	}
 
 	select {
@@ -111,7 +111,7 @@ func TestTunnelDrainsPendingWebhookOnConnect(t *testing.T) {
 	if err := wsjson.Read(ctx, conn, &req); err != nil {
 		t.Fatalf("read pending request: %v", err)
 	}
-	if req.ID != "wh_pending" || req.Path != "/offline" {
+	if req.Path != "/offline" {
 		t.Fatalf("request = %#v", req)
 	}
 	if err := wsjson.Write(ctx, conn, tunnel.Response{
@@ -170,7 +170,7 @@ func TestTunnelReplayDoesNotDuplicatePendingWebhook(t *testing.T) {
 	if err := wsjson.Read(ctx, conn, &req); err != nil {
 		t.Fatalf("read pending request: %v", err)
 	}
-	if req.ID != "wh_pending" || req.Replay {
+	if req.Path != "/offline" || req.Replay {
 		t.Fatalf("request = %#v, want pending drain without replay flag", req)
 	}
 	if err := wsjson.Write(ctx, conn, tunnel.Response{

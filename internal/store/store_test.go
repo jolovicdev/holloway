@@ -258,6 +258,70 @@ func TestStoreOrdersWebhookTimesWithNanoseconds(t *testing.T) {
 	}
 }
 
+func TestStoreRetentionDeletes(t *testing.T) {
+	t.Parallel()
+
+	s, err := Open(t.TempDir() + "/holloway.db")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer s.Close()
+
+	if _, err := s.CreateToken("tok", "Test token"); err != nil {
+		t.Fatalf("create token: %v", err)
+	}
+
+	now := time.Now().UTC()
+	save := func(id string, age time.Duration) {
+		if err := s.SaveWebhook(Webhook{
+			ID:         id,
+			TokenID:    "tok",
+			Method:     "POST",
+			Path:       "/x",
+			Body:       "{}",
+			ReceivedAt: now.Add(-age),
+		}); err != nil {
+			t.Fatalf("save %s: %v", id, err)
+		}
+	}
+
+	save("wh_old", 48*time.Hour)
+	save("wh_recent", time.Hour)
+
+	removed, err := s.DeleteWebhooksOlderThan(now.Add(-24 * time.Hour))
+	if err != nil {
+		t.Fatalf("delete by age: %v", err)
+	}
+	if removed != 1 {
+		t.Fatalf("removed by age = %d, want 1", removed)
+	}
+	if _, err := s.GetWebhook("wh_old"); err == nil {
+		t.Fatal("wh_old should have been deleted")
+	}
+	if _, err := s.GetWebhook("wh_recent"); err != nil {
+		t.Fatalf("wh_recent should remain: %v", err)
+	}
+
+	// Cap to the single most recent row per token; wh_recent is older than the
+	// two below, so it should be evicted.
+	save("wh_a", 30*time.Minute)
+	save("wh_b", 10*time.Minute)
+	removed, err = s.DeleteWebhooksOverCountPerToken(1)
+	if err != nil {
+		t.Fatalf("delete by count: %v", err)
+	}
+	if removed != 2 {
+		t.Fatalf("removed by count = %d, want 2", removed)
+	}
+	page, err := s.ListWebhooks(WebhookQuery{})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if page.Total != 1 || page.Webhooks[0].ID != "wh_b" {
+		t.Fatalf("remaining = %#v, want only wh_b", page.Webhooks)
+	}
+}
+
 func TestStoreUsesSingleSQLiteConnection(t *testing.T) {
 	t.Parallel()
 
