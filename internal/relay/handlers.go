@@ -2,6 +2,7 @@ package relay
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -51,7 +52,14 @@ func (s *Server) handleHook(w http.ResponseWriter, r *http.Request) {
 		Body:       string(body),
 		ReceivedAt: receivedAt,
 	}
+	if s.dedup {
+		webhook.DedupKey = dedupKey(r.Method, forwardPath, body)
+	}
 	if err := s.store.SaveWebhook(webhook); err != nil {
+		if errors.Is(err, store.ErrDuplicateWebhook) {
+			s.respondDuplicate(w, tokenID, webhook.DedupKey)
+			return
+		}
 		http.Error(w, "save webhook", http.StatusInternalServerError)
 		return
 	}
@@ -100,6 +108,19 @@ func (s *Server) handleHook(w http.ResponseWriter, r *http.Request) {
 func acceptPending(w http.ResponseWriter) {
 	w.WriteHeader(http.StatusAccepted)
 	_, _ = io.WriteString(w, "accepted\n")
+}
+
+// respondDuplicate replays the answer the original delivery already got: its
+// real status and body if delivered, or 202 if it is still queued. The
+// duplicate is never enqueued or forwarded again.
+func (s *Server) respondDuplicate(w http.ResponseWriter, tokenID, key string) {
+	original, err := s.store.WebhookByDedupKey(tokenID, key)
+	if err != nil || original.StatusCode == 0 {
+		acceptPending(w)
+		return
+	}
+	w.WriteHeader(original.StatusCode)
+	_, _ = io.WriteString(w, original.ResponseBody)
 }
 
 func (s *Server) handleTunnel(w http.ResponseWriter, r *http.Request) {

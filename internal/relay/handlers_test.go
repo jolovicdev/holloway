@@ -217,6 +217,96 @@ func TestHookForwardsLocalErrorStatusToProvider(t *testing.T) {
 	}
 }
 
+func TestHookDeduplicatesPendingDeliveries(t *testing.T) {
+	t.Parallel()
+
+	app := newTestAppWithConfig(t, Config{Dedup: true})
+	app.createToken(t, "testtoken")
+
+	post := func() int {
+		req := httptest.NewRequest(http.MethodPost, "/hook/testtoken/orders", strings.NewReader(`{"id":1}`))
+		rec := httptest.NewRecorder()
+		app.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	if code := post(); code != http.StatusAccepted {
+		t.Fatalf("first status = %d, want 202", code)
+	}
+	if code := post(); code != http.StatusAccepted {
+		t.Fatalf("duplicate status = %d, want 202", code)
+	}
+
+	pending, err := app.store.PendingWebhooks("testtoken")
+	if err != nil {
+		t.Fatalf("pending webhooks: %v", err)
+	}
+	if len(pending) != 1 {
+		t.Fatalf("pending count = %d, want 1 (duplicate not stored)", len(pending))
+	}
+}
+
+func TestHookReplaysOriginalResponseToDuplicate(t *testing.T) {
+	t.Parallel()
+
+	app := newTestAppWithConfig(t, Config{Dedup: true})
+	app.createToken(t, "testtoken")
+	sender := &fakeSender{response: tunnel.Response{StatusCode: 201, Body: `{"ok":true}`}}
+	unregister := app.hub.Register("testtoken", sender)
+	defer unregister()
+
+	post := func() (int, string) {
+		req := httptest.NewRequest(http.MethodPost, "/hook/testtoken/orders", strings.NewReader(`{"id":1}`))
+		rec := httptest.NewRecorder()
+		app.ServeHTTP(rec, req)
+		body, _ := io.ReadAll(rec.Body)
+		return rec.Code, string(body)
+	}
+
+	if code, body := post(); code != http.StatusCreated || body != `{"ok":true}` {
+		t.Fatalf("first delivery = %d %q, want 201 with passthrough body", code, body)
+	}
+	// The duplicate replays the original's status and body without re-forwarding.
+	if code, body := post(); code != http.StatusCreated || body != `{"ok":true}` {
+		t.Fatalf("duplicate = %d %q, want replayed 201 body", code, body)
+	}
+
+	if len(sender.seen) != 1 {
+		t.Fatalf("forwarded %d times, want 1 (duplicate not re-forwarded)", len(sender.seen))
+	}
+	history, err := app.store.LastWebhooks(10)
+	if err != nil {
+		t.Fatalf("last webhooks: %v", err)
+	}
+	if len(history) != 1 {
+		t.Fatalf("history rows = %d, want 1 (duplicate not stored)", len(history))
+	}
+}
+
+func TestHookWithoutDedupStoresEveryDelivery(t *testing.T) {
+	t.Parallel()
+
+	app := newTestApp(t) // dedup disabled by default
+	app.createToken(t, "testtoken")
+
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/hook/testtoken/orders", strings.NewReader(`{"id":1}`))
+		rec := httptest.NewRecorder()
+		app.ServeHTTP(rec, req)
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("status = %d, want 202", rec.Code)
+		}
+	}
+
+	pending, err := app.store.PendingWebhooks("testtoken")
+	if err != nil {
+		t.Fatalf("pending webhooks: %v", err)
+	}
+	if len(pending) != 2 {
+		t.Fatalf("pending count = %d, want 2 (dedup disabled keeps every delivery)", len(pending))
+	}
+}
+
 func TestReplayWebhookSendsStoredRequest(t *testing.T) {
 	t.Parallel()
 
