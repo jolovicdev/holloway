@@ -7,7 +7,18 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"modernc.org/sqlite"
 )
+
+// ErrDuplicateWebhook is returned by SaveWebhook when a webhook with the same
+// (token, dedup key) already exists. The caller can look the original up with
+// WebhookByDedupKey and replay its response instead of enqueuing a duplicate.
+var ErrDuplicateWebhook = errors.New("duplicate webhook")
+
+// sqliteConstraintUnique is SQLITE_CONSTRAINT_UNIQUE: the partial unique index
+// on (token_id, dedup_key) rejected a duplicate delivery.
+const sqliteConstraintUnique = 2067
 
 func (s *Store) SaveWebhook(webhook Webhook) error {
 	if webhook.ID == "" {
@@ -30,8 +41,8 @@ func (s *Store) SaveWebhook(webhook Webhook) error {
 
 	_, err = s.db.Exec(
 		`INSERT INTO webhooks (
-			id, token_id, method, path, headers, body, response_body, status_code, received_at, delivered_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+			id, token_id, method, path, headers, body, response_body, status_code, received_at, delivered_at, dedup_key
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
 		webhook.ID,
 		webhook.TokenID,
 		webhook.Method,
@@ -41,8 +52,53 @@ func (s *Store) SaveWebhook(webhook Webhook) error {
 		webhook.ResponseBody,
 		webhook.StatusCode,
 		formatTime(webhook.ReceivedAt),
+		nullableString(webhook.DedupKey),
 	)
+	if isUniqueViolation(err) {
+		return ErrDuplicateWebhook
+	}
 	return err
+}
+
+// nullableString stores the empty string as SQL NULL so the partial unique
+// index (which only covers non-null keys) never collides keyless rows.
+func nullableString(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
+}
+
+func isUniqueViolation(err error) bool {
+	var sqliteErr *sqlite.Error
+	return errors.As(err, &sqliteErr) && sqliteErr.Code() == sqliteConstraintUnique
+}
+
+// WebhookByDedupKey returns the earliest webhook stored for tokenID under
+// dedupKey, or sql.ErrNoRows if none. Used to replay the original response to a
+// duplicate delivery.
+func (s *Store) WebhookByDedupKey(tokenID, dedupKey string) (Webhook, error) {
+	rows, err := s.db.Query(
+		`SELECT id, token_id, method, path, headers, body, response_body, status_code, received_at, delivered_at
+		 FROM webhooks
+		 WHERE token_id = ? AND dedup_key = ?
+		 ORDER BY received_at ASC
+		 LIMIT 1`,
+		tokenID,
+		dedupKey,
+	)
+	if err != nil {
+		return Webhook{}, err
+	}
+	defer rows.Close()
+
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return Webhook{}, err
+		}
+		return Webhook{}, sql.ErrNoRows
+	}
+	return scanWebhook(rows)
 }
 
 func (s *Store) MarkDelivered(id string, statusCode int, responseBody string) error {

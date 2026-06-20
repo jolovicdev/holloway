@@ -40,6 +40,7 @@ func run(ctx context.Context, args []string, getenv func(string) string) error {
 	webhookRateLimit := flags.Int("webhook-rate-limit", envIntFrom(getenv, "HOLLOWAY_WEBHOOK_RATE_LIMIT", relay.DefaultWebhookRateLimitPerMinute), "webhook requests per token per minute")
 	retentionMaxAge := flags.Duration("retention-max-age", envDurationFrom(getenv, "HOLLOWAY_RETENTION_MAX_AGE", 0), "delete webhooks older than this (e.g. 720h); 0 disables")
 	retentionMaxRows := flags.Int("retention-max-rows", envIntFrom(getenv, "HOLLOWAY_RETENTION_MAX_ROWS", 0), "keep at most this many webhooks per token; 0 disables")
+	dedup := flags.Bool("dedup", envBoolFrom(getenv, "HOLLOWAY_DEDUP", false), "drop duplicate deliveries (same method, path, and body) and replay the original response")
 	allowInsecureAdmin := flags.Bool("allow-insecure-admin", envBoolFrom(getenv, "HOLLOWAY_ALLOW_INSECURE_ADMIN", false), "allow unauthenticated dashboard and token management")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -77,6 +78,7 @@ func run(ctx context.Context, args []string, getenv func(string) string) error {
 		Hub:                hub,
 		AdminPassword:      adminPassword,
 		AllowInsecureAdmin: *allowInsecureAdmin,
+		Dedup:              *dedup,
 		Events:             broker,
 		WebhookLimiter:     relay.NewWebhookRateLimiter(*webhookRateLimit, time.Minute),
 	})

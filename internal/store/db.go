@@ -27,6 +27,7 @@ type Webhook struct {
 	Path         string
 	Headers      map[string][]string
 	Body         string
+	DedupKey     string
 	ResponseBody string
 	StatusCode   int
 	ReceivedAt   time.Time
@@ -100,7 +101,8 @@ func (s *Store) migrate() error {
 			response_body TEXT NOT NULL DEFAULT '',
 			status_code INTEGER NOT NULL DEFAULT 0,
 			received_at DATETIME NOT NULL,
-			delivered_at DATETIME
+			delivered_at DATETIME,
+			dedup_key TEXT
 		)`,
 		`CREATE INDEX IF NOT EXISTS webhooks_token_pending_idx
 			ON webhooks(token_id, status_code, received_at)`,
@@ -117,6 +119,15 @@ func (s *Store) migrate() error {
 		return err
 	}
 	if err := s.ensureColumn("webhooks", "response_body", `ALTER TABLE webhooks ADD COLUMN response_body TEXT NOT NULL DEFAULT ''`); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("webhooks", "dedup_key", `ALTER TABLE webhooks ADD COLUMN dedup_key TEXT`); err != nil {
+		return err
+	}
+	// Partial unique index: only deliveries that carry a dedup key are
+	// constrained, so keyless rows (dedup disabled, or pre-upgrade) never
+	// collide. Created after the column exists on upgraded databases.
+	if _, err := s.db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS webhooks_dedup_idx ON webhooks(token_id, dedup_key) WHERE dedup_key IS NOT NULL`); err != nil {
 		return err
 	}
 	return nil

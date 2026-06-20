@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"testing"
 	"time"
 )
@@ -319,6 +320,59 @@ func TestStoreRetentionDeletes(t *testing.T) {
 	}
 	if page.Total != 1 || page.Webhooks[0].ID != "wh_b" {
 		t.Fatalf("remaining = %#v, want only wh_b", page.Webhooks)
+	}
+}
+
+func TestStoreDeduplicatesByKey(t *testing.T) {
+	t.Parallel()
+
+	s, err := Open(t.TempDir() + "/holloway.db")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer s.Close()
+
+	for _, tok := range []string{"tok_a", "tok_b"} {
+		if _, err := s.CreateToken(tok, "Test token"); err != nil {
+			t.Fatalf("create token %s: %v", tok, err)
+		}
+	}
+
+	save := func(id, token, key string) error {
+		return s.SaveWebhook(Webhook{
+			ID:       id,
+			TokenID:  token,
+			Method:   "POST",
+			Path:     "/x",
+			Body:     "{}",
+			DedupKey: key,
+		})
+	}
+
+	if err := save("wh_1", "tok_a", "k1"); err != nil {
+		t.Fatalf("first save: %v", err)
+	}
+	if err := save("wh_2", "tok_a", "k1"); !errors.Is(err, ErrDuplicateWebhook) {
+		t.Fatalf("duplicate save error = %v, want ErrDuplicateWebhook", err)
+	}
+	// The same key under a different token is independent.
+	if err := save("wh_3", "tok_b", "k1"); err != nil {
+		t.Fatalf("cross-token save: %v", err)
+	}
+	// Keyless rows (dedup disabled) are never deduplicated.
+	if err := save("wh_4", "tok_a", ""); err != nil {
+		t.Fatalf("first keyless save: %v", err)
+	}
+	if err := save("wh_5", "tok_a", ""); err != nil {
+		t.Fatalf("second keyless save: %v", err)
+	}
+
+	original, err := s.WebhookByDedupKey("tok_a", "k1")
+	if err != nil {
+		t.Fatalf("lookup by dedup key: %v", err)
+	}
+	if original.ID != "wh_1" {
+		t.Fatalf("dedup lookup = %s, want wh_1", original.ID)
 	}
 }
 

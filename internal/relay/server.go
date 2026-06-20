@@ -32,6 +32,7 @@ type Config struct {
 	Hub                *Hub
 	AdminPassword      string
 	AllowInsecureAdmin bool
+	Dedup              bool
 	Events             EventPublisher
 	WebhookLimiter     WebhookLimiter
 }
@@ -41,6 +42,7 @@ type Server struct {
 	hub                *Hub
 	adminPassword      string
 	allowInsecureAdmin bool
+	dedup              bool
 	events             EventPublisher
 	webhookLimiter     WebhookLimiter
 	mux                *http.ServeMux
@@ -56,6 +58,7 @@ func NewServer(config Config) *Server {
 		hub:                config.Hub,
 		adminPassword:      config.AdminPassword,
 		allowInsecureAdmin: config.AllowInsecureAdmin,
+		dedup:              config.Dedup,
 		events:             config.Events,
 		webhookLimiter:     webhookLimiter,
 		mux:                http.NewServeMux(),

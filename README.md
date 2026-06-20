@@ -120,6 +120,7 @@ Environment variables (flags take precedence):
 - `HOLLOWAY_WEBHOOK_RATE_LIMIT` — webhook requests per token per minute, default `300`. Requests over the limit return `429` before they are persisted.
 - `HOLLOWAY_RETENTION_MAX_AGE` — delete webhooks older than this (e.g. `720h`). Disabled by default.
 - `HOLLOWAY_RETENTION_MAX_ROWS` — keep at most this many webhooks per token. Disabled by default.
+- `HOLLOWAY_DEDUP` — drop duplicate deliveries (same method, path, and body) and replay the original response. Disabled by default.
 
 ### Retention
 
@@ -130,6 +131,16 @@ holloway-server -retention-max-age 720h -retention-max-rows 50000
 ```
 
 Retention deletes rows but does not shrink the database file; reclaim space with a manual `VACUUM` if needed.
+
+### Deduplication
+
+A provider that retries a delivery (often because it didn't get a fast `2xx` the first time) sends the same payload again. With `-dedup` / `HOLLOWAY_DEDUP=true`, Holloway recognizes a repeat — identified by the request method, path, and body — and instead of queuing and forwarding it a second time, replays the original answer: the local app's status and body if it was already delivered, or `202 Accepted` if it is still pending.
+
+```sh
+holloway-server -dedup
+```
+
+The match is content-based, so it works for any provider without per-provider configuration (signature headers like `Stripe-Signature` change between retries and are deliberately excluded). It's off by default: two genuinely distinct deliveries with byte-identical payloads would collapse into one, which you opt into rather than get by surprise.
 
 ## Client
 
@@ -227,6 +238,9 @@ Those are excellent hosted gateways. Holloway trades their fan-out, transformati
 
 **Does it verify provider signatures (e.g. GitHub HMAC)?**
 No — Holloway forwards the raw request, headers included, so your local app verifies signatures exactly as it would in production.
+
+**What if a provider sends the same webhook twice?**
+By default every delivery is stored, so a retry creates a second row. Enable `-dedup` to collapse retries — Holloway matches on method, path, and body, skips the duplicate, and replays the original response. See [Deduplication](#deduplication).
 
 ## License
 
