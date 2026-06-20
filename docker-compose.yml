@@ -11,8 +11,27 @@ services:
       HOLLOWAY_WEBHOOK_RATE_LIMIT: "${HOLLOWAY_WEBHOOK_RATE_LIMIT:-300}"
     volumes:
       - holloway-data:/data
+    # Not published to the host: only Caddy reaches it, over the compose network.
+    expose:
+      - "8080"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - holloway
+    environment:
+      HOLLOWAY_DOMAIN: "${HOLLOWAY_DOMAIN:?set HOLLOWAY_DOMAIN (e.g. hooks.example.com)}"
     ports:
-      - "8080:8080"
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
 
 volumes:
   holloway-data:
+  caddy-data:
+  caddy-config:

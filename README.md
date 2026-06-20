@@ -188,19 +188,20 @@ go install github.com/jolovicdev/holloway/cmd/holloway-server@v0.2.0
 
 ## Deploy with Docker Compose
 
+Holloway ships with a Caddy sidecar that terminates TLS and obtains a free Let's Encrypt certificate automatically. Point your domain's DNS A/AAAA record at the host, make sure ports 80 and 443 are open, then:
+
 ```sh
+export HOLLOWAY_DOMAIN='hooks.example.com'
 export HOLLOWAY_ADMIN_PASSWORD='change-this'
 export HOLLOWAY_BOOTSTRAP_TOKEN='use-a-long-random-token'
 export HOLLOWAY_BOOTSTRAP_TUNNEL_SECRET='use-another-long-random-token'
 docker compose up -d --build
 ```
 
-Point Caddy at the container:
+Caddy gets the certificate on the first request and reverse-proxies to Holloway, including the WebSocket tunnel. Holloway itself is not published to the host — only Caddy's `80`/`443` are exposed. Your client then connects over `wss://`:
 
-```caddy
-holloway.example.com {
-	reverse_proxy holloway:8080
-}
+```sh
+holloway connect --server wss://hooks.example.com --token "$HOLLOWAY_BOOTSTRAP_TOKEN" --secret "$HOLLOWAY_BOOTSTRAP_TUNNEL_SECRET" --port 3000
 ```
 
 ## Build releases
