@@ -193,8 +193,8 @@ The webhook list is paginated and supports `q`, `path`, `status`, `from`, and `t
 ## Install from source
 
 ```sh
-go install github.com/jolovicdev/holloway/cmd/holloway@v0.2.0
-go install github.com/jolovicdev/holloway/cmd/holloway-server@v0.2.0
+go install github.com/jolovicdev/holloway/cmd/holloway@v0.3.0
+go install github.com/jolovicdev/holloway/cmd/holloway-server@v0.3.0
 ```
 
 ## Deploy with Docker Compose
